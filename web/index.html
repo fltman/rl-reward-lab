@@ -1,0 +1,280 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1" />
+<title>RL Reward Lab</title>
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
+<style>
+  :root {
+    --bg: #0e1116;
+    --panel: #161b22;
+    --line: #2a313c;
+    --fg: #e6edf3;
+    --muted: #8b949e;
+    --accent: #58a6ff;
+    --good: #3fb950;
+    --warn: #d29922;
+    --bad: #f85149;
+    --mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; padding: 0; background: var(--bg); color: var(--fg);
+               font: 14px/1.5 -apple-system, BlinkMacSystemFont, "Helvetica Neue", Arial, sans-serif; }
+  body { padding: 24px; max-width: 1100px; margin: 0 auto; }
+  h1 { font-size: 20px; margin: 0 0 4px 0; }
+  .sub { color: var(--muted); margin-bottom: 24px; font-size: 13px; }
+  .panel { background: var(--panel); border: 1px solid var(--line); border-radius: 8px;
+           padding: 16px; margin-bottom: 16px; }
+  .panel h2 { margin: 0 0 12px 0; font-size: 13px; text-transform: uppercase;
+              letter-spacing: 0.06em; color: var(--muted); font-weight: 600; }
+  .row { display: flex; gap: 8px; align-items: center; }
+  input[type=text] {
+    flex: 1; background: #0d1117; border: 1px solid var(--line); color: var(--fg);
+    padding: 10px 12px; border-radius: 6px; font: inherit;
+  }
+  input[type=text]:focus { outline: none; border-color: var(--accent); }
+  button {
+    background: var(--accent); color: #0d1117; border: 0; padding: 10px 20px;
+    border-radius: 6px; font: 600 14px inherit; cursor: pointer;
+  }
+  button:disabled { opacity: 0.4; cursor: not-allowed; }
+  .status {
+    display: inline-block; padding: 3px 10px; border-radius: 999px;
+    font-size: 12px; font-weight: 600; background: var(--line); color: var(--muted);
+  }
+  .status.generating { background: #1f3554; color: var(--accent); }
+  .status.training   { background: #2f3a1f; color: var(--good); }
+  .status.rendering  { background: #4a3416; color: var(--warn); }
+  .status.done       { background: #1f3a1f; color: var(--good); }
+  .status.error      { background: #3a1f1f; color: var(--bad); }
+  .examples { margin-top: 8px; color: var(--muted); font-size: 12px; }
+  .examples a { color: var(--accent); cursor: pointer; margin-right: 12px; }
+  pre {
+    margin: 0; background: #0d1117; border: 1px solid var(--line); border-radius: 6px;
+    padding: 12px; overflow-x: auto; font: 13px/1.5 var(--mono); color: var(--fg);
+    white-space: pre; max-height: 320px;
+  }
+  .hidden { display: none; }
+  #chart-wrap { height: 200px; }
+  .clips { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 12px; }
+  .clip { width: 160px; }
+  .clip video { width: 160px; height: 160px; background: #000; border-radius: 4px; display: block; }
+  .clip .lbl { font: 11px var(--mono); color: var(--muted); margin-top: 4px;
+               display: flex; justify-content: space-between; }
+  #final-video { width: 100%; max-width: 720px; background: #000; border-radius: 6px; }
+  .badges { display: flex; gap: 12px; margin-top: 12px; flex-wrap: wrap; }
+  .badge {
+    background: #0d1117; border: 1px solid var(--line); padding: 6px 12px;
+    border-radius: 6px; font: 12px var(--mono);
+  }
+  .badge .v { color: var(--fg); font-weight: 600; }
+  .badge .k { color: var(--muted); margin-right: 6px; }
+  .err {
+    background: #3a1f1f; border: 1px solid #5a2222; color: #ffb3b3;
+    padding: 12px; border-radius: 6px; font: 13px var(--mono);
+  }
+</style>
+</head>
+<body>
+
+<h1>RL Reward Lab</h1>
+<div class="sub">
+  Type a goal in plain English. Gemma 4 e4b writes a reward function, PPO trains
+  HalfCheetah on it for 300k steps, and you watch it learn.
+</div>
+
+<div class="panel">
+  <div class="row">
+    <input id="goal" type="text" placeholder='e.g. "jump straight up repeatedly without moving sideways"'
+           autocomplete="off" />
+    <button id="run">Run</button>
+    <span id="status" class="status">idle</span>
+  </div>
+  <div class="examples">
+    Try:
+    <a data-goal="run forward as fast as possible">run forward fast</a>
+    <a data-goal="run backwards">run backwards</a>
+    <a data-goal="jump straight up repeatedly without moving sideways">jump in place</a>
+    <a data-goal="stand still and balanced on the back foot only">balance on one foot</a>
+  </div>
+</div>
+
+<div id="code-panel" class="panel hidden">
+  <h2>Generated Reward Function</h2>
+  <pre id="code"></pre>
+</div>
+
+<div id="train-panel" class="panel hidden">
+  <h2>Training</h2>
+  <div id="chart-wrap"><canvas id="chart"></canvas></div>
+  <div class="clips" id="clips"></div>
+</div>
+
+<div id="final-panel" class="panel hidden">
+  <h2>Final Policy</h2>
+  <video id="final-video" controls autoplay loop muted playsinline></video>
+  <div class="badges" id="badges"></div>
+</div>
+
+<div id="err" class="hidden"></div>
+
+<script>
+const $ = (id) => document.getElementById(id);
+const goalEl  = $('goal');
+const runBtn  = $('run');
+const statEl  = $('status');
+const codeEl  = $('code');
+const codePnl = $('code-panel');
+const trainPnl = $('train-panel');
+const finalPnl = $('final-panel');
+const clipsEl  = $('clips');
+const finalVid = $('final-video');
+const badgesEl = $('badges');
+const errEl    = $('err');
+
+// example chips
+document.querySelectorAll('.examples a').forEach(a => {
+  a.onclick = () => { goalEl.value = a.dataset.goal; };
+});
+
+let chart = null;
+function makeChart() {
+  if (chart) chart.destroy();
+  chart = new Chart($('chart'), {
+    type: 'line',
+    data: { datasets: [{
+      label: 'ep_rew_mean',
+      data: [],
+      borderColor: '#58a6ff',
+      backgroundColor: 'rgba(88,166,255,0.15)',
+      borderWidth: 2,
+      pointRadius: 0,
+      tension: 0.2,
+      fill: true,
+    }]},
+    options: {
+      animation: false,
+      responsive: true,
+      maintainAspectRatio: false,
+      scales: {
+        x: { type: 'linear', title: { display: true, text: 'timestep', color: '#8b949e' },
+             ticks: { color: '#8b949e' }, grid: { color: '#1f242c' } },
+        y: { title: { display: true, text: 'episode reward (custom)', color: '#8b949e' },
+             ticks: { color: '#8b949e' }, grid: { color: '#1f242c' } },
+      },
+      plugins: { legend: { display: false } },
+    },
+  });
+}
+
+function setStatus(phase, msg) {
+  statEl.className = 'status ' + (phase || '');
+  statEl.textContent = msg || phase || 'idle';
+}
+
+function reset() {
+  setStatus('', 'starting…');
+  codeEl.textContent = '';
+  codePnl.classList.add('hidden');
+  trainPnl.classList.add('hidden');
+  finalPnl.classList.add('hidden');
+  clipsEl.innerHTML = '';
+  badgesEl.innerHTML = '';
+  errEl.classList.add('hidden');
+  errEl.className = 'hidden';
+  errEl.textContent = '';
+}
+
+function addClip({url, iter, step, reward}) {
+  const wrap = document.createElement('div');
+  wrap.className = 'clip';
+  wrap.innerHTML = `
+    <video src="${url}" autoplay loop muted playsinline></video>
+    <div class="lbl"><span>iter ${iter}</span><span>${step.toLocaleString()} steps</span></div>
+    <div class="lbl"><span></span><span>r=${reward.toFixed(1)}</span></div>`;
+  clipsEl.appendChild(wrap);
+}
+
+function badge(k, v) {
+  const b = document.createElement('div');
+  b.className = 'badge';
+  b.innerHTML = `<span class="k">${k}</span><span class="v">${v}</span>`;
+  badgesEl.appendChild(b);
+}
+
+let evtSource = null;
+
+function start() {
+  const goal = goalEl.value.trim();
+  if (!goal) return;
+  reset();
+  runBtn.disabled = true;
+  setStatus('generating', 'connecting…');
+
+  evtSource = new EventSource('/generate?goal=' + encodeURIComponent(goal));
+
+  evtSource.addEventListener('run', e => {
+    setStatus('generating', 'asking Gemma…');
+  });
+
+  evtSource.addEventListener('status', e => {
+    const d = JSON.parse(e.data);
+    setStatus(d.phase, d.message);
+  });
+
+  evtSource.addEventListener('code', e => {
+    const d = JSON.parse(e.data);
+    codeEl.textContent = d.code;
+    codePnl.classList.remove('hidden');
+  });
+
+  evtSource.addEventListener('train_step', e => {
+    const d = JSON.parse(e.data);
+    if (!chart) {
+      makeChart();
+      trainPnl.classList.remove('hidden');
+    }
+    chart.data.datasets[0].data.push({ x: d.step, y: d.reward });
+    chart.update('none');
+    setStatus('training', `iter ${d.iter} · ${d.step.toLocaleString()} / ${d.total_steps.toLocaleString()} · r=${d.reward.toFixed(1)}`);
+  });
+
+  evtSource.addEventListener('clip', e => {
+    addClip(JSON.parse(e.data));
+  });
+
+  evtSource.addEventListener('final', e => {
+    const d = JSON.parse(e.data);
+    finalVid.src = d.url;
+    finalPnl.classList.remove('hidden');
+    badge('native eval reward', d.native_reward.toFixed(2));
+    badge('total time', d.elapsed_seconds + ' s');
+    badge('run', d.run_id);
+  });
+
+  evtSource.addEventListener('end', () => {
+    setStatus('done', 'done');
+    evtSource.close();
+    runBtn.disabled = false;
+  });
+
+  evtSource.addEventListener('error', e => {
+    let msg = 'connection lost';
+    try {
+      if (e.data) { msg = JSON.parse(e.data).message || msg; }
+    } catch (_) {}
+    setStatus('error', 'error');
+    errEl.className = 'err';
+    errEl.classList.remove('hidden');
+    errEl.textContent = msg;
+    if (evtSource) evtSource.close();
+    runBtn.disabled = false;
+  });
+}
+
+runBtn.onclick = start;
+goalEl.addEventListener('keydown', e => { if (e.key === 'Enter') start(); });
+</script>
+</body>
+</html>
