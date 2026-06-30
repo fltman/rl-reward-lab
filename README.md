@@ -1,5 +1,7 @@
 # RL Reward Lab
 
+[![Support me on Patreon](https://img.shields.io/badge/Patreon-Support%20my%20work-FF424D?style=flat&logo=patreon&logoColor=white)](https://www.patreon.com/AndersBjarby)
+
 Train a simulated cheetah from a plain-English goal. A local LLM (Gemma 4 e4b
 on Apple Silicon) writes the reward function, PPO trains HalfCheetah on it for
 300k steps, and you watch the policy evolve live in the browser.
